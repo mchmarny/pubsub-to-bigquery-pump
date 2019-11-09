@@ -1,0 +1,27 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+# accounts
+gcloud iam service-accounts create ${SA_NAME} \
+	--display-name "stackdriver notification service account"
+
+
+# run service account policies
+gcloud projects add-iam-policy-binding $PROJECT \
+    --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/run.invoker
+
+gcloud projects add-iam-policy-binding $PROJECT \
+	--member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/logging.logWriter
+
+gcloud projects add-iam-policy-binding $PROJECT \
+	--member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/cloudtrace.agent
+
+gcloud projects add-iam-policy-binding $PROJECT \
+	--member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/monitoring.metricWriter
+

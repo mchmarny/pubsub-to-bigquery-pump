@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# modules
+go mod tidy
+go mod vendor
+
+# re-build
+go build -o bin/notif .
+
+# start
+bin/notif

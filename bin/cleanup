@@ -1,0 +1,14 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+
+gcloud beta run services delete $SERVICE_NAME \
+    --platform managed \
+    --region $SERVICE_REGION
+
+gcloud beta scheduler jobs delete "${SERVICE_NAME}-schedule"
+
+gcloud iam service-accounts delete \
+    "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"

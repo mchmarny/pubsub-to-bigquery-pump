@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Global config
+SERVICE_NAME=stackdriver-notifs
+SERVICE_REGION=us-central1
+SA_NAME=notif-service
+IMAGE_VERSION="0.1.2"
+
+# GCP metadata
+PROJECT=$(gcloud config get-value project)
+PROJECT_NUM=$(gcloud projects describe ${PROJECT} --format="value(projectNumber)")
+

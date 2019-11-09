@@ -1,0 +1,6 @@
+.git
+.cache
+/bin
+LICENSE
+*.md
+.DS_Store
