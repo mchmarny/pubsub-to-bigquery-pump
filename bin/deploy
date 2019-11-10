@@ -10,9 +10,8 @@ gcloud beta run deploy $SERVICE_NAME \
 	--platform managed \
 	--timeout 15m \
 	--region $SERVICE_REGION \
-	--set-env-vars "RELEASE=v${IMAGE_VERSION}" \
+	--set-env-vars "RELEASE=v${IMAGE_VERSION},MAX_STALL=15,MAX_DURATION=900,BATCH_SIZE=100,DEBUG=1,TOKEN=${NOTIF_TOKEN}" \
 	--service-account "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
-
 
 gcloud beta run services add-iam-policy-binding $SERVICE_NAME \
     --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \

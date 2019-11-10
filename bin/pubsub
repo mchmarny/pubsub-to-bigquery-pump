@@ -1,0 +1,9 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+gcloud pubsub topics create $TOPIC_NAME
+
+gcloud pubsub subscriptions create "${TOPIC_NAME}-sub" \
+    --topic $TOPIC_NAME

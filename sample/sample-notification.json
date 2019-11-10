@@ -1,0 +1,19 @@
+{
+    "incident": {
+        "incident_id": "0.lei421z1el8o",
+        "resource_id": "",
+        "resource_name": "totally-new cassweb1",
+        "started_at": 1514931579,
+        "policy_name": "Backend processing utilization too high",
+        "condition_name": "Metric Threshold on Instance (GCE) cassweb1",
+        "url": "https://app.google.stackdriver.com/incidents/0.kmttg2it8kr0?project=totally-new",
+        "documentation": {
+            "content": "CPU utilization sample. This might affect our backend processing.\u000AFollowing playbook here: https: //my.sample.playbook/cassweb1",
+            "mime_type": "text/markdown"
+        },
+        "state": "open",
+        "ended_at": null,
+        "summary": "CPU utilization for totally-new cassweb1 is above the threshold of 0.8 with a value of 0.994."
+    },
+    "version": "1.2"
+}

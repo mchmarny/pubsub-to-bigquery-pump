@@ -11,10 +11,15 @@ import (
 )
 
 var (
-	logger    = log.New(os.Stdout, "[PUMP] ", 0)
-	port      = env.MustGetEnvVar("PORT", "8080")
-	release   = env.MustGetEnvVar("RELEASE", "v0.0.1-default")
-	projectID = project.GetIDOrFail()
+	logger      = log.New(os.Stdout, "[PUMP] ", 0)
+	port        = env.MustGetEnvVar("PORT", "8080")
+	maxStall    = env.MustGetIntEnvVar("MAX_STALL", 30)
+	maxDuration = env.MustGetIntEnvVar("MAX_DURATION", 900)
+	batchSize   = env.MustGetIntEnvVar("BATCH_SIZE", 100)
+	accessToken = env.MustGetEnvVar("TOKEN", "")
+	release     = env.MustGetEnvVar("RELEASE", "v0.0.1-default")
+	debug       = env.MustGetIntEnvVar("DEBUG", 0)
+	projectID   = project.GetIDOrFail()
 )
 
 func main() {

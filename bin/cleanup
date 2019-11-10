@@ -3,12 +3,27 @@
 DIR="$(dirname "$0")"
 . "${DIR}/config"
 
+# Stackdriver
+POLICY_ID=$(gcloud alpha monitoring policies list \
+	--filter 'displayName="notif-sub-policy"' \
+	--format 'value("name")')
+gcloud alpha monitoring policies delete $POLICY_ID -q
 
-gcloud beta run services delete $SERVICE_NAME \
-    --platform managed \
-    --region $SERVICE_REGION
+CHANNEL_ID=$(gcloud alpha monitoring channels list \
+	--filter 'displayName="demo-channel"' \
+	--format 'value("name")')
+gcloud alpha monitoring channels delete $CHANNEL_ID -q
 
-gcloud beta scheduler jobs delete "${SERVICE_NAME}-schedule"
 
-gcloud iam service-accounts delete \
-    "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+# PubSub
+gcloud pubsub subscriptions delete "${TOPIC_NAME}-sub"
+gcloud pubsub topics delete $TOPIC_NAME
+
+# Cloud Run
+# gcloud beta run services delete $SERVICE_NAME \
+#     --platform managed \
+#     --region $SERVICE_REGION
+
+# IAM
+# gcloud iam service-accounts delete \
+#     "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"

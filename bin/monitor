@@ -1,0 +1,27 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
+    --region ${SERVICE_REGION} --format="value(status.domain)")
+
+gcloud alpha monitoring channels create \
+	--display-name demo-channel \
+	--enabled \
+	--type webhook_tokenauth \
+	--channel-labels "url=${SERVICE_URL}/v1/notif"
+
+gcloud alpha monitoring policies create \
+	--policy-from-file ./sample/pubsub-topic-policy.json
+
+CHANNEL_ID=$(gcloud alpha monitoring channels list \
+	--filter 'displayName="demo-channel"' \
+	--format 'value("name")')
+
+POLICY_ID=$(gcloud alpha monitoring policies list \
+	--filter 'displayName="notif-sub-policy"' \
+	--format 'value("name")')
+
+gcloud alpha monitoring policies update $POLICY_ID \
+	--add-notification-channels $CHANNEL_ID
