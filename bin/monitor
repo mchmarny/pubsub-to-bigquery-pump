@@ -7,6 +7,11 @@ SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
     --region ${SERVICE_REGION} --format="value(status.domain)")
 echo "SERVICE_URL=${SERVICE_URL}"
 
+if [ -z "$SERVICE_URL" ]
+then
+    exit 1
+fi
+
 gcloud alpha monitoring channels create \
 	--display-name "${SERVICE_NAME}-channel" \
 	--channel-labels "url=${SERVICE_URL}/v1/notif?token=${NOTIF_TOKEN}" \
@@ -14,7 +19,7 @@ gcloud alpha monitoring channels create \
 	--enabled
 
 gcloud alpha monitoring policies create \
-	--policy-from-file ./sample/pubsub-topic-policy.json
+	--policy-from-file ./sample/pubsub-threshold-policy.yaml
 
 CHANNEL_ID=$(gcloud alpha monitoring channels list \
 	--filter "displayName='${SERVICE_NAME}-channel'" \
@@ -22,7 +27,7 @@ CHANNEL_ID=$(gcloud alpha monitoring channels list \
 echo "CHANNEL_ID=${CHANNEL_ID}"
 
 POLICY_ID=$(gcloud alpha monitoring policies list \
-	--filter "displayName='${SERVICE_NAME}-policy'" \
+	--filter "displayName='pubsub-threshold-policy'" \
 	--format 'value("name")')
 echo "POLICY_ID=${POLICY_ID}"
 

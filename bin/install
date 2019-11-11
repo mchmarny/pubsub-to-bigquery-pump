@@ -1,0 +1,19 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+echo "Account"
+bin/account
+
+echo "PubSub"
+bin/pubsub
+
+echo "Deploy"
+bin/deploy
+
+echo "Monitor"
+bin/monitor
+
+echo "Messages"
+bin/messages

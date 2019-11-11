@@ -12,10 +12,10 @@ go mod vendor
 # to build image in your own project
 gcloud builds submit \
     --project cloudylabs-public \
-    --tag "gcr.io/cloudylabs-public/${SERVICE_NAME}:${IMAGE_VERSION}" \
+    --tag "gcr.io/cloudylabs-public/pubsub-to-bigquery-pump:${SERVICE_IMAGE_VERSION}" \
     .
 
 # private iamge (project scoped)
 # gcloud builds submit \
-#     --tag "gcr.io/${PROJECT}/${SERVICE_NAME}:${IMAGE_VERSION}" \
+#     --tag "gcr.io/${PROJECT}/pubsub-to-bigquery-pump:${SERVICE_IMAGE_VERSION}" \
 #     .

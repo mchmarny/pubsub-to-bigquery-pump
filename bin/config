@@ -1,22 +1,22 @@
 #!/bin/bash
 
 # Service
-SERVICE_NAME=sd-notif-handler
-SERVICE_REGION=us-central1
-TOPIC_NAME=mocked9
-IMAGE_VERSION="0.2.2"
+SERVICE_REGION="us-central1"
+SERVICE_IMAGE_VERSION="0.2.3"
+TOPIC_NAME="my-iot-events"
 
 # Pump
-DATASET_NAME=pump
-TABLE_NAME=events
+DATASET_NAME="pump"
+TABLE_NAME="events"
 PUMP_MAX_STALL=15
 PUMP_MAX_DURATION=900
 PUMP_BATCH_SIZE=100
 # NOTIF_TOKEN=
 
 # GCP metadata
+SERVICE_NAME="pubsub-to-bigquery-pump"
 SA_NAME="${SERVICE_NAME}-sa"
-SUBSCRIPTION_NAME="${TOPIC_NAME}-sub"
+SUBSCRIPTION_NAME="${SERVICE_NAME}-sub"
 PROJECT=$(gcloud config get-value project)
-PROJECT_NUM=$(gcloud projects describe ${PROJECT} --format="value(projectNumber)")
-
+PROJECT_NUM=$(gcloud projects describe ${PROJECT} \
+    --format="value(projectNumber)")

@@ -11,13 +11,13 @@ CR_VAR+=",TABLE=${TABLE_NAME}"
 CR_VAR+=",MAX_STALL=${PUMP_MAX_STALL}"
 CR_VAR+=",MAX_DURATION=${PUMP_MAX_DURATION}"
 CR_VAR+=",BATCH_SIZE=${PUMP_BATCH_SIZE}"
-CR_VAR+=",RELEASE=v${IMAGE_VERSION}"
+CR_VAR+=",RELEASE=v${SERVICE_IMAGE_VERSION}"
 CR_VAR+=",TOKEN=${NOTIF_TOKEN}"
 
 
 gcloud beta run deploy $SERVICE_NAME \
 	--allow-unauthenticated \
-	--image "gcr.io/cloudylabs-public/${SERVICE_NAME}:${IMAGE_VERSION}" \
+	--image "gcr.io/cloudylabs-public/pubsub-to-bigquery-pump:${SERVICE_IMAGE_VERSION}" \
 	--platform managed \
 	--timeout 15m \
 	--region $SERVICE_REGION \

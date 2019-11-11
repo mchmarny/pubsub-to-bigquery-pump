@@ -4,14 +4,29 @@ DIR="$(dirname "$0")"
 . "${DIR}/config"
 
 # accounts
-gcloud iam service-accounts create ${SA_NAME} \
-	--display-name "stackdriver notification service account"
+HAS_SA=$(gcloud iam service-accounts list \
+    --filter email="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --format "value(email)")
 
+if [ -z "$HAS_SA" ]
+then
+    gcloud iam service-accounts create ${SA_NAME} \
+        --display-name "incident-handler service account"
+fi
 
 # run service account policies
 gcloud projects add-iam-policy-binding $PROJECT \
     --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
     --role roles/run.invoker
+
+# TODO: `pubsub.editor` should be sufficient
+gcloud projects add-iam-policy-binding $PROJECT \
+    --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/pubsub.editor
+
+gcloud projects add-iam-policy-binding $PROJECT \
+    --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+    --role roles/bigquery.dataOwner
 
 gcloud projects add-iam-policy-binding $PROJECT \
 	--member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \

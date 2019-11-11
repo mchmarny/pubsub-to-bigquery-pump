@@ -3,7 +3,23 @@
 DIR="$(dirname "$0")"
 . "${DIR}/config"
 
-gcloud pubsub topics create $TOPIC_NAME
 
-gcloud pubsub subscriptions create $SUBSCRIPTION_NAME \
-    --topic $TOPIC_NAME
+HAS_TOPIC=$(gcloud pubsub topics list \
+    --filter "name=projects/${PROJECT}/topics/${TOPIC_NAME}" \
+    --format "value(name)")
+
+if [ -z "$HAS_TOPIC" ]
+then
+    gcloud pubsub topics create $TOPIC_NAME
+fi
+
+
+HAS_SUBSCRIPTION=$(gcloud pubsub subscriptions list \
+    --filter "name=projects/${PROJECT}/subscriptions/${SUBSCRIPTION_NAME}" \
+    --format "value(name)")
+
+if [ -z "$HAS_SUBSCRIPTION" ]
+then
+    gcloud pubsub subscriptions create $SUBSCRIPTION_NAME \
+        --topic $TOPIC_NAME
+fi

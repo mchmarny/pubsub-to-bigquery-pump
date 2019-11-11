@@ -14,16 +14,16 @@ CHANNEL_ID=$(gcloud alpha monitoring channels list \
 	--format 'value("name")')
 gcloud alpha monitoring channels delete $CHANNEL_ID -q
 
-
 # PubSub
-gcloud pubsub subscriptions delete "${TOPIC_NAME}-sub"
-gcloud pubsub topics delete $TOPIC_NAME
+gcloud pubsub subscriptions delete $SUBSCRIPTION_NAME -q
 
 # Cloud Run
 gcloud beta run services delete $SERVICE_NAME \
     --platform managed \
-    --region $SERVICE_REGION
+    --region $SERVICE_REGION \
+	-q
 
 # IAM
 gcloud iam service-accounts delete \
-    "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+    "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
+	-q
