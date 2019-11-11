@@ -5,23 +5,27 @@ DIR="$(dirname "$0")"
 
 SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
     --region ${SERVICE_REGION} --format="value(status.domain)")
+echo "SERVICE_URL=${SERVICE_URL}"
 
 gcloud alpha monitoring channels create \
-	--display-name demo-channel \
-	--enabled \
+	--display-name "${SERVICE_NAME}-channel" \
+	--channel-labels "url=${SERVICE_URL}/v1/notif?token=${NOTIF_TOKEN}" \
 	--type webhook_tokenauth \
-	--channel-labels "url=${SERVICE_URL}/v1/notif"
+	--enabled
 
 gcloud alpha monitoring policies create \
 	--policy-from-file ./sample/pubsub-topic-policy.json
 
 CHANNEL_ID=$(gcloud alpha monitoring channels list \
-	--filter 'displayName="demo-channel"' \
+	--filter "displayName='${SERVICE_NAME}-channel'" \
 	--format 'value("name")')
+echo "CHANNEL_ID=${CHANNEL_ID}"
 
 POLICY_ID=$(gcloud alpha monitoring policies list \
-	--filter 'displayName="notif-sub-policy"' \
+	--filter "displayName='${SERVICE_NAME}-policy'" \
 	--format 'value("name")')
+echo "POLICY_ID=${POLICY_ID}"
 
 gcloud alpha monitoring policies update $POLICY_ID \
-	--add-notification-channels $CHANNEL_ID
+	--add-notification-channels $CHANNEL_ID \
+	--update-user-labels "target-service=${SERVICE_NAME}"

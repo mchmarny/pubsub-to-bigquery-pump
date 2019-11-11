@@ -5,5 +5,5 @@ DIR="$(dirname "$0")"
 
 gcloud pubsub topics create $TOPIC_NAME
 
-gcloud pubsub subscriptions create "${TOPIC_NAME}-sub" \
+gcloud pubsub subscriptions create $SUBSCRIPTION_NAME \
     --topic $TOPIC_NAME

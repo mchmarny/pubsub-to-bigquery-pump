@@ -11,13 +11,13 @@
                 ],
                 "comparison": "COMPARISON_GT",
                 "duration": "60s",
-                "filter": "metric.type=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\" resource.type=\"pubsub_subscription\" resource.label.\"subscription_id\"=\"mocked-sub\"",
+                "filter": "metric.type=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\" resource.type=\"pubsub_subscription\" resource.label.\"subscription_id\"=\"mocked9-sub\"",
                 "thresholdValue": 60.0,
                 "trigger": {
                     "count": 1
                 }
             },
-            "displayName": "age"
+            "displayName": "oldest-unacked-message-age"
         },
         {
             "conditionThreshold": {
@@ -29,15 +29,15 @@
                 ],
                 "comparison": "COMPARISON_GT",
                 "duration": "60s",
-                "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.label.\"subscription_id\"=\"mocked-sub\"",
+                "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.label.\"subscription_id\"=\"mocked9-sub\"",
                 "thresholdValue": 100.0,
                 "trigger": {
                     "count": 1
                 }
             },
-            "displayName": "size"
+            "displayName": "num-undelivered-messages"
         }
     ],
-    "displayName": "notif-sub-policy",
+    "displayName": "sd-notif-handler-policy",
     "enabled": true
 }

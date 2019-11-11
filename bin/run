@@ -5,7 +5,7 @@ go mod tidy
 go mod vendor
 
 # re-build
-go build -o bin/notif .
+go build -o bin/service .
 
 # start
-bin/notif
+bin/service

@@ -4,16 +4,16 @@ DIR="$(dirname "$0")"
 . "${DIR}/config"
 
 
-# curl -H "Content-Type: application/json" \
-#     -d @./sample.json \
-#     -X POST http://localhost:8080/v1/notif | jq "."
-
-
-SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
-    --region ${SERVICE_REGION} --format="value(status.domain)")
-
 curl -H "Content-Type: application/json" \
     -d @./sample/sample-notification.json \
-    -X POST "${SERVICE_URL}/v1/notif?token=${NOTIF_TOKEN}" | jq "."
+    -X POST "http://localhost:8080/v1/notif?token=${NOTIF_TOKEN}" | jq "."
+
+
+# SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
+#     --region ${SERVICE_REGION} --format="value(status.domain)")
+
+# curl -H "Content-Type: application/json" \
+#     -d @./sample/sample-notification.json \
+#     -X POST "${SERVICE_URL}/v1/notif?token=${NOTIF_TOKEN}" | jq "."
 
 

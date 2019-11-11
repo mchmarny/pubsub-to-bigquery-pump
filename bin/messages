@@ -1,0 +1,6 @@
+#!/bin/bash
+
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
+bin/eventmaker --topic=$TOPIC_NAME --sources=5 --metric=demo --freq=0.2s

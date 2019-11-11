@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mchmarny/gcputil/env"
@@ -11,15 +12,20 @@ import (
 )
 
 var (
-	logger      = log.New(os.Stdout, "[PUMP] ", 0)
-	port        = env.MustGetEnvVar("PORT", "8080")
+	//service
+	logger    = log.New(os.Stdout, "[PUMP] ", 0)
+	port      = env.MustGetEnvVar("PORT", "8080")
+	release   = env.MustGetEnvVar("RELEASE", "v0.0.1-default")
+	debug     = env.MustGetIntEnvVar("DEBUG", 0)
+	projectID = project.GetIDOrFail()
+
+	accessToken = strings.TrimSpace(env.MustGetEnvVar("TOKEN", ""))
 	maxStall    = env.MustGetIntEnvVar("MAX_STALL", 30)
 	maxDuration = env.MustGetIntEnvVar("MAX_DURATION", 900)
 	batchSize   = env.MustGetIntEnvVar("BATCH_SIZE", 100)
-	accessToken = env.MustGetEnvVar("TOKEN", "")
-	release     = env.MustGetEnvVar("RELEASE", "v0.0.1-default")
-	debug       = env.MustGetIntEnvVar("DEBUG", 0)
-	projectID   = project.GetIDOrFail()
+	subName     = strings.TrimSpace(env.MustGetEnvVar("SUB", ""))
+	dsName      = strings.TrimSpace(env.MustGetEnvVar("DATSET", ""))
+	tblName     = strings.TrimSpace(env.MustGetEnvVar("TABLE", ""))
 )
 
 func main() {

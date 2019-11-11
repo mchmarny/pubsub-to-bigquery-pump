@@ -3,6 +3,17 @@
 DIR="$(dirname "$0")"
 . "${DIR}/config"
 
+# Cloud Run Service Variables
+CR_VAR="DEBUG=0"
+CR_VAR+=",SUB=${SUBSCRIPTION_NAME}"
+CR_VAR+=",DATSET=${DATASET_NAME}"
+CR_VAR+=",TABLE=${TABLE_NAME}"
+CR_VAR+=",MAX_STALL=${PUMP_MAX_STALL}"
+CR_VAR+=",MAX_DURATION=${PUMP_MAX_DURATION}"
+CR_VAR+=",BATCH_SIZE=${PUMP_BATCH_SIZE}"
+CR_VAR+=",RELEASE=v${IMAGE_VERSION}"
+CR_VAR+=",TOKEN=${NOTIF_TOKEN}"
+
 
 gcloud beta run deploy $SERVICE_NAME \
 	--allow-unauthenticated \
@@ -10,8 +21,9 @@ gcloud beta run deploy $SERVICE_NAME \
 	--platform managed \
 	--timeout 15m \
 	--region $SERVICE_REGION \
-	--set-env-vars "RELEASE=v${IMAGE_VERSION},MAX_STALL=15,MAX_DURATION=900,BATCH_SIZE=100,DEBUG=1,TOKEN=${NOTIF_TOKEN}" \
+	--set-env-vars $CR_VAR \
 	--service-account "${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+
 
 gcloud beta run services add-iam-policy-binding $SERVICE_NAME \
     --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \

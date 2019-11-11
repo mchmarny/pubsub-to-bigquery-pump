@@ -17,13 +17,7 @@ const (
 	durationMetric   = "duration"
 )
 
-func pump(sub, ds, table string) (count int, err error) {
-
-	if sub == "" || ds == "" || table == "" {
-		return 0, fmt.Errorf(
-			"missing required parameter: (sub=%s, ds=%s, table=%s)",
-			sub, ds, table)
-	}
+func pump() (count int, err error) {
 
 	ctx := context.Background()
 	start := time.Now()
@@ -36,15 +30,15 @@ func pump(sub, ds, table string) (count int, err error) {
 	}
 
 	logger.Printf("creating importer[%s.%s.%s]",
-		projectID, ds, table)
-	imp, err := newImportClient(ctx, ds, table)
+		projectID, dsName, tblName)
+	imp, err := newImportClient(ctx, dsName, tblName)
 	if err != nil {
 		return 0, fmt.Errorf("bigquery client[%s.%s]: %v",
-			ds, table, err)
+			dsName, tblName, err)
 	}
 
-	logger.Printf("creating pubsub subscription[%s]", sub)
-	s := client.Subscription(sub)
+	logger.Printf("creating pubsub subscription[%s]", subName)
+	s := client.Subscription(subName)
 	inCtx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	messageCounter := 0
@@ -115,26 +109,26 @@ func pump(sub, ds, table string) (count int, err error) {
 	// receive error
 	if receiveErr != nil {
 		return 0, fmt.Errorf("pubsub subscription[%s] receive: %v",
-			sub, receiveErr)
+			subName, receiveErr)
 	}
 
 	// error inside of receive handler
 	if innerError != nil {
 		return 0, fmt.Errorf("pubsub receive[%s] process error: %v",
-			sub, innerError)
+			subName, innerError)
 	}
 
 	// insert leftovers
 	if insertErr := imp.insert(ctx); insertErr != nil {
 		return 0, fmt.Errorf("bigquery insert[%s] error: %v",
-			sub, insertErr)
+			subName, insertErr)
 	}
 
 	// metrics
 	totalDuration := time.Now().Sub(start).Seconds()
-	if metricErr := submitMetrics(ctx, sub, totalCounter, totalDuration); metricErr != nil {
+	if metricErr := submitMetrics(ctx, subName, totalCounter, totalDuration); metricErr != nil {
 		return 0, fmt.Errorf("metrics[%s] error: %v",
-			sub, metricErr)
+			subName, metricErr)
 	}
 
 	return totalCounter, nil
