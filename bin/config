@@ -1,23 +1,31 @@
 #!/bin/bash
 
-# Service
+# Source Topic
 TOPIC_NAME="my-iot-events"
+
+# Target Dataset and Table
 DATASET_NAME="pump"
 TABLE_NAME="events"
-SERVICE_REGION="us-central1"
-SERVICE_IMAGE_VERSION="0.2.3"
-PUMP_MAX_STALL=15
-PUMP_MAX_DURATION=900
-PUMP_BATCH_SIZE=100
-# Both topic max age and length are eval as OR
-TOPIC_MAX_MESSAGE_COUNT=100
-TOPIC_MAX_MESSAGE_AGE=180 # 3 min in seconds, must be > 60
+
+# Shared token between the trigger and service
 # NOTIF_TOKEN=
+
+# Frequency
+# Batch insert triggered as soon as one of these is reached
+TOPIC_MAX_MESSAGE_COUNT=100 # every n number of messages
+TOPIC_MAX_MESSAGE_AGE=180 # when oldest message is n seconds (must be > 60)
+
+# Buch insert service configuration
+SERVICE_REGION="us-central1"
+SERVICE_IMAGE_VERSION="0.2.3" # gcr.io/cloudylabs-public/pubsub-to-bigquery-pump:x
+PUMP_MAX_STALL=15 # number of seconds service will wait for new messages before exiting
+PUMP_MAX_DURATION=900 # how long will the insert run (must be < max Cloud Run service exec)
+PUMP_BATCH_SIZE=100 # size of batch per each insert
 
 # Derived values, don't change
 SUBSCRIPTION_NAME="${TOPIC_NAME}-pump"
-SERVICE_NAME="${SUBSCRIPTION_NAME}"
-SA_NAME="${SUBSCRIPTION_NAME}"
+SERVICE_NAME=$SUBSCRIPTION_NAME
+SA_NAME=$SUBSCRIPTION_NAME
 
 PROJECT=$(gcloud config get-value project)
 PROJECT_NUM=$(gcloud projects describe ${PROJECT} \
