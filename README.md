@@ -1,6 +1,6 @@
 # Drain PubSub topic messages to BigQuery table
 
-Simple utility to drain JSON messages on PubSub topic into BigQuery table.
+Simple utility to drain JSON messages on PubSub topic into BigQuery table using Cloud Run service and Stackdriver metrics.
 
 ## How to Use It
 

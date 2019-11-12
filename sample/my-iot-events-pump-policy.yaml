@@ -9,7 +9,7 @@ conditions:
     duration: 60s
     filter: metric.type="pubsub.googleapis.com/subscription/oldest_unacked_message_age"
       resource.type="pubsub_subscription" resource.label."subscription_id"="my-iot-events-pump"
-    thresholdValue: 60
+    thresholdValue: 180
     trigger:
       count: 1
   displayName: oldest-unacked-message-age
