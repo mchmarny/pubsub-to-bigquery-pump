@@ -8,7 +8,7 @@ conditions:
     comparison: COMPARISON_GT
     duration: 60s
     filter: metric.type="pubsub.googleapis.com/subscription/oldest_unacked_message_age"
-      resource.type="pubsub_subscription" resource.label."subscription_id"="pubsub-to-bigquery-pump-sub"
+      resource.type="pubsub_subscription" resource.label."subscription_id"="my-iot-events-pump"
     thresholdValue: 60
     trigger:
       count: 1
@@ -20,10 +20,10 @@ conditions:
     comparison: COMPARISON_GT
     duration: 60s
     filter: metric.type="pubsub.googleapis.com/subscription/num_undelivered_messages"
-      resource.type="pubsub_subscription" resource.label."subscription_id"="pubsub-to-bigquery-pump-sub"
+      resource.type="pubsub_subscription" resource.label."subscription_id"="my-iot-events-pump"
     thresholdValue: 100
     trigger:
       count: 1
   displayName: num-undelivered-messages
-displayName: pubsub-threshold-policy
+displayName: my-iot-events-pump-policy
 enabled: true

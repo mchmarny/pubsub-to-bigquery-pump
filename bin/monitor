@@ -12,22 +12,48 @@ then
     exit 1
 fi
 
-gcloud alpha monitoring channels create \
-	--display-name "${SERVICE_NAME}-channel" \
+# channel
+
+CHANNEL_ID=$(gcloud alpha monitoring channels list \
+	--filter "displayName='${SUBSCRIPTION_NAME}-channel'" \
+	--format 'value("name")')
+
+if [ -z "$CHANNEL_ID" ]
+then
+  gcloud alpha monitoring channels create \
+	--display-name "${SUBSCRIPTION_NAME}-channel" \
 	--channel-labels "url=${SERVICE_URL}/v1/notif?token=${NOTIF_TOKEN}" \
 	--type webhook_tokenauth \
 	--enabled
-
-gcloud alpha monitoring policies create \
-	--policy-from-file ./sample/pubsub-threshold-policy.yaml
+fi
 
 CHANNEL_ID=$(gcloud alpha monitoring channels list \
-	--filter "displayName='${SERVICE_NAME}-channel'" \
+	--filter "displayName='${SUBSCRIPTION_NAME}-channel'" \
 	--format 'value("name")')
 echo "CHANNEL_ID=${CHANNEL_ID}"
 
+# policy
+
 POLICY_ID=$(gcloud alpha monitoring policies list \
-	--filter "displayName='pubsub-threshold-policy'" \
+	--filter "displayName='${SERVICE_NAME}-policy'" \
+	--format 'value("name")')
+
+if [ -z "$POLICY_ID" ]
+then
+	sed -e "s/\${SUB_NAME}/$SUBSCRIPTION_NAME/" \
+		-e "s/\${MAX_MESSAGE_AGE}/$TOPIC_MAX_MESSAGE_AGE/" \
+		-e "s/\${MAX_MESSAGE_NUM}/$TOPIC_MAX_MESSAGE_COUNT/" \
+		-e "s/\${POLICY_NAME}/$SERVICE_NAME-policy/" \
+		./sample/pubsub-threshold-policy-template.yaml \
+		> "./sample/${SERVICE_NAME}-policy.yaml"
+	echo "Policy File: ./sample/${SERVICE_NAME}-policy.yaml"
+
+	gcloud alpha monitoring policies create \
+		--policy-from-file "./sample/${SERVICE_NAME}-policy.yaml"
+fi
+
+POLICY_ID=$(gcloud alpha monitoring policies list \
+	--filter "displayName='${SERVICE_NAME}-policy'" \
 	--format 'value("name")')
 echo "POLICY_ID=${POLICY_ID}"
 

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DIR="$(dirname "$0")"
+. "${DIR}/config"
+
 # modules
 go mod tidy
 go mod vendor
@@ -8,4 +11,14 @@ go mod vendor
 go build -o bin/service .
 
 # start
+
+DEBUG=0
+SUB=${SUBSCRIPTION_NAME}
+DATSET=${DATASET_NAME}
+TABLE=${TABLE_NAME}
+MAX_STALL=${PUMP_MAX_STALL}
+MAX_DURATION=${PUMP_MAX_DURATION}
+BATCH_SIZE=${PUMP_BATCH_SIZE}
+RELEASE=v${SERVICE_IMAGE_VERSION}
+TOKEN=${NOTIF_TOKEN}
 bin/service

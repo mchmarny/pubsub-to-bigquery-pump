@@ -10,8 +10,9 @@ HAS_SA=$(gcloud iam service-accounts list \
 
 if [ -z "$HAS_SA" ]
 then
+    echo "Creating ${SA_NAME}..."
     gcloud iam service-accounts create ${SA_NAME} \
-        --display-name "incident-handler service account"
+        --display-name "pubsub-to-bigquery-pump cloud run service account"
 fi
 
 # run service account policies
@@ -19,7 +20,7 @@ gcloud projects add-iam-policy-binding $PROJECT \
     --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
     --role roles/run.invoker
 
-# TODO: `pubsub.editor` should be sufficient
+# TODO: `pubsub.subscriber` should be sufficient
 gcloud projects add-iam-policy-binding $PROJECT \
     --member "serviceAccount:${SA_NAME}@${PROJECT}.iam.gserviceaccount.com" \
     --role roles/pubsub.editor
