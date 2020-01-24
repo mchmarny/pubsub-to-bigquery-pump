@@ -4,7 +4,7 @@ DIR="$(dirname "$0")"
 . "${DIR}/config"
 
 SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
-    --region ${SERVICE_REGION} --format="value(status.domain)")
+    --region ${SERVICE_REGION} --format="value(status.url)")
 echo "SERVICE_URL=${SERVICE_URL}"
 
 if [ -z "$SERVICE_URL" ]
