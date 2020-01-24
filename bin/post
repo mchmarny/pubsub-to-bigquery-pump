@@ -10,7 +10,7 @@ DIR="$(dirname "$0")"
 
 
 SERVICE_URL=$(gcloud beta run services describe ${SERVICE_NAME} \
-    --region ${SERVICE_REGION} --format="value(status.domain)")
+    --region ${SERVICE_REGION} --format="value(status.url)")
 
 curl -H "Content-Type: application/json" \
     -d @./sample/sample-notification.json \
