@@ -45,13 +45,19 @@ type TableMetadata struct {
 	// The user-friendly name for the table.
 	Name string
 
+	// Output-only location of the table, based on the encapsulating dataset.
+	Location string
+
 	// The user-friendly description of the table.
 	Description string
 
 	// The table schema. If provided on create, ViewQuery must be empty.
 	Schema Schema
 
-	// The query to use for a view. If provided on create, Schema must be nil.
+	// If non-nil, this table is a materialized view.
+	MaterializedView *MaterializedViewDefinition
+
+	// The query to use for a logical view. If provided on create, Schema must be nil.
 	ViewQuery string
 
 	// Use Legacy SQL for the view query.
@@ -63,8 +69,13 @@ type TableMetadata struct {
 	// Deprecated: use UseLegacySQL.
 	UseStandardSQL bool
 
-	// If non-nil, the table is partitioned by time.
+	// If non-nil, the table is partitioned by time. Only one of
+	// time partitioning or range partitioning can be specified.
 	TimePartitioning *TimePartitioning
+
+	// If non-nil, the table is partitioned by integer range.  Only one of
+	// time partitioning or range partitioning can be specified.
+	RangePartitioning *RangePartitioning
 
 	// If set to true, queries that reference this table must specify a
 	// partition filter (e.g. a WHERE clause) that can be used to eliminate
@@ -108,6 +119,14 @@ type TableMetadata struct {
 	// The number of rows of data in this table.
 	// This does not include data that is being buffered during a streaming insert.
 	NumRows uint64
+
+	// SnapshotDefinition contains additional information about the provenance of a
+	// given snapshot table.
+	SnapshotDefinition *SnapshotDefinition
+
+	// CloneDefinition contains additional information about the provenance of a
+	// given cloned table.
+	CloneDefinition *CloneDefinition
 
 	// Contains information regarding this table's streaming buffer, if one is
 	// present. This field will be nil if the table is not being streamed to or if
@@ -156,18 +175,161 @@ type TableType string
 const (
 	// RegularTable is a regular table.
 	RegularTable TableType = "TABLE"
-	// ViewTable is a table type describing that the table is view. See more
-	// information at https://cloud.google.com/bigquery/docs/views.
+	// ViewTable is a table type describing that the table is a logical view.
+	// See more information at https://cloud.google.com/bigquery/docs/views.
 	ViewTable TableType = "VIEW"
 	// ExternalTable is a table type describing that the table is an external
 	// table (also known as a federated data source). See more information at
 	// https://cloud.google.com/bigquery/external-data-sources.
 	ExternalTable TableType = "EXTERNAL"
+	// MaterializedView represents a managed storage table that's derived from
+	// a base table.
+	MaterializedView TableType = "MATERIALIZED_VIEW"
+	// Snapshot represents an immutable point in time snapshot of some other
+	// table.
+	Snapshot TableType = "SNAPSHOT"
+)
+
+// MaterializedViewDefinition contains information for materialized views.
+type MaterializedViewDefinition struct {
+	// EnableRefresh governs whether the derived view is updated to reflect
+	// changes in the base table.
+	EnableRefresh bool
+
+	// LastRefreshTime reports the time, in millisecond precision, that the
+	// materialized view was last updated.
+	LastRefreshTime time.Time
+
+	// Query contains the SQL query used to define the materialized view.
+	Query string
+
+	// RefreshInterval defines the maximum frequency, in millisecond precision,
+	// at which this this materialized view will be refreshed.
+	RefreshInterval time.Duration
+}
+
+func (mvd *MaterializedViewDefinition) toBQ() *bq.MaterializedViewDefinition {
+	if mvd == nil {
+		return nil
+	}
+	return &bq.MaterializedViewDefinition{
+		EnableRefresh:     mvd.EnableRefresh,
+		Query:             mvd.Query,
+		LastRefreshTime:   mvd.LastRefreshTime.UnixNano() / 1e6,
+		RefreshIntervalMs: int64(mvd.RefreshInterval) / 1e6,
+		// force sending the bool in all cases due to how Go handles false.
+		ForceSendFields: []string{"EnableRefresh"},
+	}
+}
+
+func bqToMaterializedViewDefinition(q *bq.MaterializedViewDefinition) *MaterializedViewDefinition {
+	if q == nil {
+		return nil
+	}
+	return &MaterializedViewDefinition{
+		EnableRefresh:   q.EnableRefresh,
+		Query:           q.Query,
+		LastRefreshTime: unixMillisToTime(q.LastRefreshTime),
+		RefreshInterval: time.Duration(q.RefreshIntervalMs) * time.Millisecond,
+	}
+}
+
+// SnapshotDefinition provides metadata related to the origin of a snapshot.
+type SnapshotDefinition struct {
+
+	// BaseTableReference describes the ID of the table that this snapshot
+	// came from.
+	BaseTableReference *Table
+
+	// SnapshotTime indicates when the base table was snapshot.
+	SnapshotTime time.Time
+}
+
+func (sd *SnapshotDefinition) toBQ() *bq.SnapshotDefinition {
+	if sd == nil {
+		return nil
+	}
+	return &bq.SnapshotDefinition{
+		BaseTableReference: sd.BaseTableReference.toBQ(),
+		SnapshotTime:       sd.SnapshotTime.Format(time.RFC3339),
+	}
+}
+
+func bqToSnapshotDefinition(q *bq.SnapshotDefinition, c *Client) *SnapshotDefinition {
+	if q == nil {
+		return nil
+	}
+	sd := &SnapshotDefinition{
+		BaseTableReference: bqToTable(q.BaseTableReference, c),
+	}
+	// It's possible we could fail to populate SnapshotTime if we fail to parse
+	// the backend representation.
+	if t, err := time.Parse(time.RFC3339, q.SnapshotTime); err == nil {
+		sd.SnapshotTime = t
+	}
+	return sd
+}
+
+// CloneDefinition provides metadata related to the origin of a clone.
+type CloneDefinition struct {
+
+	// BaseTableReference describes the ID of the table that this clone
+	// came from.
+	BaseTableReference *Table
+
+	// CloneTime indicates when the base table was cloned.
+	CloneTime time.Time
+}
+
+func (cd *CloneDefinition) toBQ() *bq.CloneDefinition {
+	if cd == nil {
+		return nil
+	}
+	return &bq.CloneDefinition{
+		BaseTableReference: cd.BaseTableReference.toBQ(),
+		CloneTime:          cd.CloneTime.Format(time.RFC3339),
+	}
+}
+
+func bqToCloneDefinition(q *bq.CloneDefinition, c *Client) *CloneDefinition {
+	if q == nil {
+		return nil
+	}
+	cd := &CloneDefinition{
+		BaseTableReference: bqToTable(q.BaseTableReference, c),
+	}
+	// It's possible we could fail to populate CloneTime if we fail to parse
+	// the backend representation.
+	if t, err := time.Parse(time.RFC3339, q.CloneTime); err == nil {
+		cd.CloneTime = t
+	}
+	return cd
+}
+
+// TimePartitioningType defines the interval used to partition managed data.
+type TimePartitioningType string
+
+const (
+	// DayPartitioningType uses a day-based interval for time partitioning.
+	DayPartitioningType TimePartitioningType = "DAY"
+
+	// HourPartitioningType uses an hour-based interval for time partitioning.
+	HourPartitioningType TimePartitioningType = "HOUR"
+
+	// MonthPartitioningType uses a month-based interval for time partitioning.
+	MonthPartitioningType TimePartitioningType = "MONTH"
+
+	// YearPartitioningType uses a year-based interval for time partitioning.
+	YearPartitioningType TimePartitioningType = "YEAR"
 )
 
 // TimePartitioning describes the time-based date partitioning on a table.
 // For more information see: https://cloud.google.com/bigquery/docs/creating-partitioned-tables.
 type TimePartitioning struct {
+	// Defines the partition interval type.  Supported values are "HOUR", "DAY", "MONTH", and "YEAR".
+	// When the interval type is not specified, default behavior is DAY.
+	Type TimePartitioningType
+
 	// The amount of time to keep the storage for a partition.
 	// If the duration is empty (0), the data in the partitions do not expire.
 	Expiration time.Duration
@@ -189,8 +351,13 @@ func (p *TimePartitioning) toBQ() *bq.TimePartitioning {
 	if p == nil {
 		return nil
 	}
+	// Treat unspecified values as DAY-based partitioning.
+	intervalType := DayPartitioningType
+	if p.Type != "" {
+		intervalType = p.Type
+	}
 	return &bq.TimePartitioning{
-		Type:                   "DAY",
+		Type:                   string(intervalType),
 		ExpirationMs:           int64(p.Expiration / time.Millisecond),
 		Field:                  p.Field,
 		RequirePartitionFilter: p.RequirePartitionFilter,
@@ -202,13 +369,77 @@ func bqToTimePartitioning(q *bq.TimePartitioning) *TimePartitioning {
 		return nil
 	}
 	return &TimePartitioning{
+		Type:                   TimePartitioningType(q.Type),
 		Expiration:             time.Duration(q.ExpirationMs) * time.Millisecond,
 		Field:                  q.Field,
 		RequirePartitionFilter: q.RequirePartitionFilter,
 	}
 }
 
-// Clustering governs the organization of data within a partitioned table.
+// RangePartitioning indicates an integer-range based storage organization strategy.
+type RangePartitioning struct {
+	// The field by which the table is partitioned.
+	// This field must be a top-level field, and must be typed as an
+	// INTEGER/INT64.
+	Field string
+	// The details of how partitions are mapped onto the integer range.
+	Range *RangePartitioningRange
+}
+
+// RangePartitioningRange defines the boundaries and width of partitioned values.
+type RangePartitioningRange struct {
+	// The start value of defined range of values, inclusive of the specified value.
+	Start int64
+	// The end of the defined range of values, exclusive of the defined value.
+	End int64
+	// The width of each interval range.
+	Interval int64
+}
+
+func (rp *RangePartitioning) toBQ() *bq.RangePartitioning {
+	if rp == nil {
+		return nil
+	}
+	return &bq.RangePartitioning{
+		Field: rp.Field,
+		Range: rp.Range.toBQ(),
+	}
+}
+
+func bqToRangePartitioning(q *bq.RangePartitioning) *RangePartitioning {
+	if q == nil {
+		return nil
+	}
+	return &RangePartitioning{
+		Field: q.Field,
+		Range: bqToRangePartitioningRange(q.Range),
+	}
+}
+
+func bqToRangePartitioningRange(br *bq.RangePartitioningRange) *RangePartitioningRange {
+	if br == nil {
+		return nil
+	}
+	return &RangePartitioningRange{
+		Start:    br.Start,
+		End:      br.End,
+		Interval: br.Interval,
+	}
+}
+
+func (rpr *RangePartitioningRange) toBQ() *bq.RangePartitioningRange {
+	if rpr == nil {
+		return nil
+	}
+	return &bq.RangePartitioningRange{
+		Start:           rpr.Start,
+		End:             rpr.End,
+		Interval:        rpr.Interval,
+		ForceSendFields: []string{"Start", "End", "Interval"},
+	}
+}
+
+// Clustering governs the organization of data within a managed table.
 // For more information, see https://cloud.google.com/bigquery/docs/clustered-tables
 type Clustering struct {
 	Fields []string
@@ -280,9 +511,46 @@ func (t *Table) toBQ() *bq.TableReference {
 	}
 }
 
+// IdentifierFormat represents a how certain resource identifiers such as table references
+// are formatted.
+type IdentifierFormat string
+
+var (
+	// StandardSQLID returns an identifier suitable for use with Standard SQL.
+	StandardSQLID IdentifierFormat = "SQL"
+
+	// LegacySQLID returns an identifier suitable for use with Legacy SQL.
+	LegacySQLID IdentifierFormat = "LEGACY_SQL"
+
+	// StorageAPIResourceID returns an identifier suitable for use with the Storage API.  Namely, it's for formatting
+	// a table resource for invoking read and write functionality.
+	StorageAPIResourceID IdentifierFormat = "STORAGE_API_RESOURCE"
+
+	// ErrUnknownIdentifierFormat is indicative of requesting an identifier in a format that is
+	// not supported.
+	ErrUnknownIdentifierFormat = errors.New("unknown identifier format")
+)
+
+// Identifier returns the ID of the table in the requested format.
+func (t *Table) Identifier(f IdentifierFormat) (string, error) {
+	switch f {
+	case LegacySQLID:
+		return fmt.Sprintf("%s:%s.%s", t.ProjectID, t.DatasetID, t.TableID), nil
+	case StorageAPIResourceID:
+		return fmt.Sprintf("projects/%s/datasets/%s/tables/%s", t.ProjectID, t.DatasetID, t.TableID), nil
+	case StandardSQLID:
+		// Note we don't need to quote the project ID here, as StandardSQL has special rules to allow
+		// dash identifiers for projects without issue in table identifiers.
+		return fmt.Sprintf("%s.%s.%s", t.ProjectID, t.DatasetID, t.TableID), nil
+	default:
+		return "", ErrUnknownIdentifierFormat
+	}
+}
+
 // FullyQualifiedName returns the ID of the table in projectID:datasetID.tableID format.
 func (t *Table) FullyQualifiedName() string {
-	return fmt.Sprintf("%s:%s.%s", t.ProjectID, t.DatasetID, t.TableID)
+	s, _ := t.Identifier(LegacySQLID)
+	return s
 }
 
 // implicitTable reports whether Table is an empty placeholder, which signifies that a new table should be created with an auto-generated Table ID.
@@ -309,10 +577,13 @@ func (t *Table) Create(ctx context.Context, tm *TableMetadata) (err error) {
 		DatasetId: t.DatasetID,
 		TableId:   t.TableID,
 	}
+
 	req := t.c.bqs.Tables.Insert(t.ProjectID, t.DatasetID, table).Context(ctx)
 	setClientHeader(req.Header())
-	_, err = req.Do()
-	return err
+	return runWithRetry(ctx, func() (err error) {
+		_, err = req.Do()
+		return err
+	})
 }
 
 func (tm *TableMetadata) toBQ() (*bq.Table, error) {
@@ -343,9 +614,13 @@ func (tm *TableMetadata) toBQ() (*bq.Table, error) {
 	} else if tm.UseLegacySQL || tm.UseStandardSQL {
 		return nil, errors.New("bigquery: UseLegacy/StandardSQL requires ViewQuery")
 	}
+	t.MaterializedView = tm.MaterializedView.toBQ()
 	t.TimePartitioning = tm.TimePartitioning.toBQ()
+	t.RangePartitioning = tm.RangePartitioning.toBQ()
 	t.Clustering = tm.Clustering.toBQ()
 	t.RequirePartitionFilter = tm.RequirePartitionFilter
+	t.SnapshotDefinition = tm.SnapshotDefinition.toBQ()
+	t.CloneDefinition = tm.CloneDefinition.toBQ()
 
 	if !validExpiration(tm.ExpirationTime) {
 		return nil, fmt.Errorf("invalid expiration time: %v.\n"+
@@ -404,13 +679,14 @@ func (t *Table) Metadata(ctx context.Context) (md *TableMetadata, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return bqToTableMetadata(table)
+	return bqToTableMetadata(table, t.c)
 }
 
-func bqToTableMetadata(t *bq.Table) (*TableMetadata, error) {
+func bqToTableMetadata(t *bq.Table, c *Client) (*TableMetadata, error) {
 	md := &TableMetadata{
 		Description:            t.Description,
 		Name:                   t.FriendlyName,
+		Location:               t.Location,
 		Type:                   TableType(t.Type),
 		FullID:                 t.Id,
 		Labels:                 t.Labels,
@@ -423,6 +699,11 @@ func bqToTableMetadata(t *bq.Table) (*TableMetadata, error) {
 		ETag:                   t.Etag,
 		EncryptionConfig:       bqToEncryptionConfig(t.EncryptionConfiguration),
 		RequirePartitionFilter: t.RequirePartitionFilter,
+		SnapshotDefinition:     bqToSnapshotDefinition(t.SnapshotDefinition, c),
+		CloneDefinition:        bqToCloneDefinition(t.CloneDefinition, c),
+	}
+	if t.MaterializedView != nil {
+		md.MaterializedView = bqToMaterializedViewDefinition(t.MaterializedView)
 	}
 	if t.Schema != nil {
 		md.Schema = bqToSchema(t.Schema)
@@ -432,6 +713,7 @@ func bqToTableMetadata(t *bq.Table) (*TableMetadata, error) {
 		md.UseLegacySQL = t.View.UseLegacySql
 	}
 	md.TimePartitioning = bqToTimePartitioning(t.TimePartitioning)
+	md.RangePartitioning = bqToRangePartitioning(t.RangePartitioning)
 	md.Clustering = bqToClustering(t.Clustering)
 	if t.StreamingBuffer != nil {
 		md.StreamingBuffer = &StreamingBuffer{
@@ -455,9 +737,13 @@ func (t *Table) Delete(ctx context.Context) (err error) {
 	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.Table.Delete")
 	defer func() { trace.EndSpan(ctx, err) }()
 
-	req := t.c.bqs.Tables.Delete(t.ProjectID, t.DatasetID, t.TableID).Context(ctx)
-	setClientHeader(req.Header())
-	return req.Do()
+	call := t.c.bqs.Tables.Delete(t.ProjectID, t.DatasetID, t.TableID).Context(ctx)
+	setClientHeader(call.Header())
+
+	return runWithRetry(ctx, func() (err error) {
+		err = call.Do()
+		return err
+	})
 }
 
 // Read fetches the contents of the table.
@@ -466,7 +752,7 @@ func (t *Table) Read(ctx context.Context) *RowIterator {
 }
 
 func (t *Table) read(ctx context.Context, pf pageFetcher) *RowIterator {
-	return newRowIterator(ctx, t, pf)
+	return newRowIterator(ctx, &rowSource{t: t}, pf)
 }
 
 // NeverExpire is a sentinel value used to remove a table'e expiration time.
@@ -493,7 +779,7 @@ func (t *Table) Update(ctx context.Context, tm TableMetadataToUpdate, etag strin
 	}); err != nil {
 		return nil, err
 	}
-	return bqToTableMetadata(res)
+	return bqToTableMetadata(res, t.c)
 }
 
 func (tm *TableMetadataToUpdate) toBQ() (*bq.Table, error) {
@@ -510,12 +796,20 @@ func (tm *TableMetadataToUpdate) toBQ() (*bq.Table, error) {
 		t.FriendlyName = optional.ToString(tm.Name)
 		forceSend("FriendlyName")
 	}
+	if tm.MaterializedView != nil {
+		t.MaterializedView = tm.MaterializedView.toBQ()
+		forceSend("MaterializedView")
+	}
 	if tm.Schema != nil {
 		t.Schema = tm.Schema.toBQ()
 		forceSend("Schema")
 	}
 	if tm.EncryptionConfig != nil {
 		t.EncryptionConfiguration = tm.EncryptionConfig.toBQ()
+	}
+
+	if tm.Clustering != nil {
+		t.Clustering = tm.Clustering.toBQ()
 	}
 
 	if !validExpiration(tm.ExpirationTime) {
@@ -587,6 +881,11 @@ type TableMetadataToUpdate struct {
 	// When updating a schema, you can add columns but not remove them.
 	Schema Schema
 
+	// The table's clustering configuration.
+	// For more information on how modifying clustering affects the table, see:
+	// https://cloud.google.com/bigquery/docs/creating-clustered-tables#modifying-cluster-spec
+	Clustering *Clustering
+
 	// The table's encryption configuration.
 	EncryptionConfig *EncryptionConfig
 
@@ -599,6 +898,11 @@ type TableMetadataToUpdate struct {
 
 	// Use Legacy SQL for the view query.
 	UseLegacySQL optional.Bool
+
+	// MaterializedView allows changes to the underlying materialized view
+	// definition. When calling Update, ensure that all mutable fields of
+	// MaterializedViewDefinition are populated.
+	MaterializedView *MaterializedViewDefinition
 
 	// TimePartitioning allows modification of certain aspects of partition
 	// configuration such as partition expiration and whether partition

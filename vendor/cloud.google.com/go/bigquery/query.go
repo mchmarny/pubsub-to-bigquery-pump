@@ -17,8 +17,11 @@ package bigquery
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"cloud.google.com/go/internal/trace"
+	"cloud.google.com/go/internal/uid"
 	bq "google.golang.org/api/bigquery/v2"
 )
 
@@ -105,6 +108,10 @@ type QueryConfig struct {
 	// for the destination table.
 	TimePartitioning *TimePartitioning
 
+	// RangePartitioning specifies integer range-based partitioning
+	// for the destination table.
+	RangePartitioning *RangePartitioning
+
 	// Clustering specifies the data clustering configuration for the destination table.
 	Clustering *Clustering
 
@@ -126,6 +133,22 @@ type QueryConfig struct {
 	// Allows the schema of the destination table to be updated as a side effect of
 	// the query job.
 	SchemaUpdateOptions []string
+
+	// CreateSession will trigger creation of a new session when true.
+	CreateSession bool
+
+	// ConnectionProperties are optional key-values settings.
+	ConnectionProperties []*ConnectionProperty
+
+	// Sets a best-effort deadline on a specific job.  If job execution exceeds this
+	// timeout, BigQuery may attempt to cancel this work automatically.
+	//
+	// This deadline cannot be adjusted or removed once the job is created.  Consider
+	// using Job.Cancel in situations where you need more dynamic behavior.
+	//
+	// Experimental: this option is experimental and may be modified or removed in future versions,
+	// regardless of any other documented package stability guarantees.
+	JobTimeout time.Duration
 }
 
 func (qc *QueryConfig) toBQ() (*bq.JobConfiguration, error) {
@@ -137,9 +160,11 @@ func (qc *QueryConfig) toBQ() (*bq.JobConfiguration, error) {
 		Priority:                           string(qc.Priority),
 		MaximumBytesBilled:                 qc.MaxBytesBilled,
 		TimePartitioning:                   qc.TimePartitioning.toBQ(),
+		RangePartitioning:                  qc.RangePartitioning.toBQ(),
 		Clustering:                         qc.Clustering.toBQ(),
 		DestinationEncryptionConfiguration: qc.DestinationEncryptionConfig.toBQ(),
 		SchemaUpdateOptions:                qc.SchemaUpdateOptions,
+		CreateSession:                      qc.CreateSession,
 	}
 	if len(qc.TableDefinitions) > 0 {
 		qconf.TableDefinitions = make(map[string]bq.ExternalDataConfiguration)
@@ -188,11 +213,22 @@ func (qc *QueryConfig) toBQ() (*bq.JobConfiguration, error) {
 		}
 		qconf.QueryParameters = append(qconf.QueryParameters, qp)
 	}
-	return &bq.JobConfiguration{
+	if len(qc.ConnectionProperties) > 0 {
+		bqcp := make([]*bq.ConnectionProperty, len(qc.ConnectionProperties))
+		for k, v := range qc.ConnectionProperties {
+			bqcp[k] = v.toBQ()
+		}
+		qconf.ConnectionProperties = bqcp
+	}
+	jc := &bq.JobConfiguration{
 		Labels: qc.Labels,
 		DryRun: qc.DryRun,
 		Query:  qconf,
-	}, nil
+	}
+	if qc.JobTimeout > 0 {
+		jc.JobTimeoutMs = qc.JobTimeout.Milliseconds()
+	}
+	return jc, nil
 }
 
 func bqToQueryConfig(q *bq.JobConfiguration, c *Client) (*QueryConfig, error) {
@@ -200,6 +236,7 @@ func bqToQueryConfig(q *bq.JobConfiguration, c *Client) (*QueryConfig, error) {
 	qc := &QueryConfig{
 		Labels:                      q.Labels,
 		DryRun:                      q.DryRun,
+		JobTimeout:                  time.Duration(q.JobTimeoutMs) * time.Millisecond,
 		Q:                           qq.Query,
 		CreateDisposition:           TableCreateDisposition(qq.CreateDisposition),
 		WriteDisposition:            TableWriteDisposition(qq.WriteDisposition),
@@ -208,9 +245,11 @@ func bqToQueryConfig(q *bq.JobConfiguration, c *Client) (*QueryConfig, error) {
 		MaxBytesBilled:              qq.MaximumBytesBilled,
 		UseLegacySQL:                qq.UseLegacySql == nil || *qq.UseLegacySql,
 		TimePartitioning:            bqToTimePartitioning(qq.TimePartitioning),
+		RangePartitioning:           bqToRangePartitioning(qq.RangePartitioning),
 		Clustering:                  bqToClustering(qq.Clustering),
 		DestinationEncryptionConfig: bqToEncryptionConfig(qq.DestinationEncryptionConfiguration),
 		SchemaUpdateOptions:         qq.SchemaUpdateOptions,
+		CreateSession:               qq.CreateSession,
 	}
 	qc.UseStandardSQL = !qc.UseLegacySQL
 
@@ -246,6 +285,13 @@ func bqToQueryConfig(q *bq.JobConfiguration, c *Client) (*QueryConfig, error) {
 			return nil, err
 		}
 		qc.Parameters = append(qc.Parameters, p)
+	}
+	if len(qq.ConnectionProperties) > 0 {
+		props := make([]*ConnectionProperty, len(qq.ConnectionProperties))
+		for k, v := range qq.ConnectionProperties {
+			props[k] = bqToConnectionProperty(v)
+		}
+		qc.ConnectionProperties = props
 	}
 	return qc, nil
 }
@@ -318,11 +364,137 @@ func (q *Query) newJob() (*bq.Job, error) {
 }
 
 // Read submits a query for execution and returns the results via a RowIterator.
-// It is a shorthand for Query.Run followed by Job.Read.
-func (q *Query) Read(ctx context.Context) (*RowIterator, error) {
-	job, err := q.Run(ctx)
+// If the request can be satisfied by running using the optimized query path, it
+// is used in place of the jobs.insert path as this path does not expose a job
+// object.
+func (q *Query) Read(ctx context.Context) (it *RowIterator, err error) {
+	if q.QueryConfig.DryRun {
+		return nil, errors.New("bigquery: cannot evaluate Query.Read() for dry-run queries")
+	}
+	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.Query.Run")
+	defer func() { trace.EndSpan(ctx, err) }()
+	queryRequest, err := q.probeFastPath()
+	if err != nil {
+		// Any error means we fallback to the older mechanism.
+		job, err := q.Run(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return job.Read(ctx)
+	}
+	// we have a config, run on fastPath.
+	resp, err := q.client.runQuery(ctx, queryRequest)
 	if err != nil {
 		return nil, err
 	}
-	return job.Read(ctx)
+	// construct a minimal job for backing the row iterator.
+	minimalJob := &Job{
+		c:         q.client,
+		jobID:     resp.JobReference.JobId,
+		location:  resp.JobReference.Location,
+		projectID: resp.JobReference.ProjectId,
+	}
+	if resp.JobComplete {
+		rowSource := &rowSource{
+			j: minimalJob,
+			// RowIterator can precache results from the iterator to save a lookup.
+			cachedRows:      resp.Rows,
+			cachedSchema:    resp.Schema,
+			cachedNextToken: resp.PageToken,
+		}
+		return newRowIterator(ctx, rowSource, fetchPage), nil
+	}
+	// We're on the fastPath, but we need to poll because the job is incomplete.
+	// Fallback to job-based Read().
+	//
+	// (Issue 2937) In order to satisfy basic probing of the job in classic path,
+	// we need to supply additional config which is probed for presence, not contents.
+	//
+	minimalJob.config = &bq.JobConfiguration{
+		Query: &bq.JobConfigurationQuery{},
+	}
+
+	return minimalJob.Read(ctx)
+}
+
+// probeFastPath is used to attempt configuring a jobs.Query request based on a
+// user's Query configuration.  If all the options set on the job are supported on the
+// faster query path, this method returns a QueryRequest suitable for execution.
+func (q *Query) probeFastPath() (*bq.QueryRequest, error) {
+	// This is a denylist of settings which prevent us from composing an equivalent
+	// bq.QueryRequest due to differences between configuration parameters accepted
+	// by jobs.insert vs jobs.query.
+	if q.QueryConfig.Dst != nil ||
+		q.QueryConfig.TableDefinitions != nil ||
+		q.QueryConfig.CreateDisposition != "" ||
+		q.QueryConfig.WriteDisposition != "" ||
+		!(q.QueryConfig.Priority == "" || q.QueryConfig.Priority == InteractivePriority) ||
+		q.QueryConfig.UseLegacySQL ||
+		q.QueryConfig.MaxBillingTier != 0 ||
+		q.QueryConfig.TimePartitioning != nil ||
+		q.QueryConfig.RangePartitioning != nil ||
+		q.QueryConfig.Clustering != nil ||
+		q.QueryConfig.DestinationEncryptionConfig != nil ||
+		q.QueryConfig.SchemaUpdateOptions != nil ||
+		q.QueryConfig.JobTimeout != 0 ||
+		// User has defined the jobID generation behavior
+		q.JobIDConfig.JobID != "" {
+		return nil, fmt.Errorf("QueryConfig incompatible with fastPath")
+	}
+	pfalse := false
+	qRequest := &bq.QueryRequest{
+		Query:              q.QueryConfig.Q,
+		CreateSession:      q.CreateSession,
+		Location:           q.Location,
+		UseLegacySql:       &pfalse,
+		MaximumBytesBilled: q.QueryConfig.MaxBytesBilled,
+		RequestId:          uid.NewSpace("request", nil).New(),
+		Labels:             q.Labels,
+	}
+	if q.QueryConfig.DisableQueryCache {
+		qRequest.UseQueryCache = &pfalse
+	}
+	// Convert query parameters
+	for _, p := range q.QueryConfig.Parameters {
+		qp, err := p.toBQ()
+		if err != nil {
+			return nil, err
+		}
+		qRequest.QueryParameters = append(qRequest.QueryParameters, qp)
+	}
+	if q.QueryConfig.DefaultDatasetID != "" {
+		qRequest.DefaultDataset = &bq.DatasetReference{
+			ProjectId: q.QueryConfig.DefaultProjectID,
+			DatasetId: q.QueryConfig.DefaultDatasetID,
+		}
+	}
+	return qRequest, nil
+}
+
+// ConnectionProperty represents a single key and value pair that can be sent alongside a query request.
+type ConnectionProperty struct {
+	// Name of the connection property to set.
+	Key string
+	// Value of the connection property.
+	Value string
+}
+
+func (cp *ConnectionProperty) toBQ() *bq.ConnectionProperty {
+	if cp == nil {
+		return nil
+	}
+	return &bq.ConnectionProperty{
+		Key:   cp.Key,
+		Value: cp.Value,
+	}
+}
+
+func bqToConnectionProperty(in *bq.ConnectionProperty) *ConnectionProperty {
+	if in == nil {
+		return nil
+	}
+	return &ConnectionProperty{
+		Key:   in.Key,
+		Value: in.Value,
+	}
 }

@@ -46,21 +46,33 @@ type Job struct {
 // For jobs whose location is other than "US" or "EU", set Client.Location or use
 // JobFromIDLocation.
 func (c *Client) JobFromID(ctx context.Context, id string) (*Job, error) {
-	return c.JobFromIDLocation(ctx, id, c.Location)
+	return c.JobFromProject(ctx, c.projectID, id, c.Location)
 }
 
 // JobFromIDLocation creates a Job which refers to an existing BigQuery job. The job
 // need not have been created by this package (for example, it may have
 // been created in the BigQuery console), but it must exist in the specified location.
 func (c *Client) JobFromIDLocation(ctx context.Context, id, location string) (j *Job, err error) {
-	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.JobFromIDLocation")
+	return c.JobFromProject(ctx, c.projectID, id, location)
+}
+
+// JobFromProject creates a Job which refers to an existing BigQuery job.  The job
+// need not have been created by this package, nor does it need to reside within the same
+// project or location as the instantiated client.
+func (c *Client) JobFromProject(ctx context.Context, projectID, jobID, location string) (j *Job, err error) {
+	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.JobFromProject")
 	defer func() { trace.EndSpan(ctx, err) }()
 
-	bqjob, err := c.getJobInternal(ctx, id, location, "configuration", "jobReference", "status", "statistics")
+	bqjob, err := c.getJobInternal(ctx, jobID, location, projectID, "configuration", "jobReference", "status", "statistics")
 	if err != nil {
 		return nil, err
 	}
 	return bqToJob(bqjob, c)
+}
+
+// ProjectID returns the job's associated project.
+func (j *Job) ProjectID() string {
+	return j.projectID
 }
 
 // ID returns the job's ID.
@@ -195,7 +207,7 @@ func (j *Job) Status(ctx context.Context) (js *JobStatus, err error) {
 	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.Job.Status")
 	defer func() { trace.EndSpan(ctx, err) }()
 
-	bqjob, err := j.c.getJobInternal(ctx, j.jobID, j.location, "status", "statistics")
+	bqjob, err := j.c.getJobInternal(ctx, j.jobID, j.location, j.projectID, "status", "statistics")
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +241,23 @@ func (j *Job) Cancel(ctx context.Context) error {
 	setClientHeader(call.Header())
 	return runWithRetry(ctx, func() error {
 		_, err := call.Do()
+		return err
+	})
+}
+
+// Delete deletes the job.
+func (j *Job) Delete(ctx context.Context) (err error) {
+	ctx = trace.StartSpan(ctx, "cloud.google.com/go/bigquery.Job.Delete")
+	defer func() { trace.EndSpan(ctx, err) }()
+
+	call := j.c.bqs.Jobs.Delete(j.projectID, j.jobID).Context(ctx)
+	if j.location != "" {
+		call = call.Location(j.location)
+	}
+	setClientHeader(call.Header())
+
+	return runWithRetry(ctx, func() (err error) {
+		err = call.Do()
 		return err
 	})
 }
@@ -284,24 +313,18 @@ func (j *Job) read(ctx context.Context, waitForQuery func(context.Context, strin
 	if !j.isQuery() {
 		return nil, errors.New("bigquery: cannot read from a non-query job")
 	}
-	destTable := j.config.Query.DestinationTable
-	// The destination table should only be nil if there was a query error.
-	projectID := j.projectID
-	if destTable != nil && projectID != destTable.ProjectId {
-		return nil, fmt.Errorf("bigquery: job project ID is %q, but destination table's is %q", projectID, destTable.ProjectId)
-	}
-	schema, totalRows, err := waitForQuery(ctx, projectID)
+	schema, totalRows, err := waitForQuery(ctx, j.projectID)
 	if err != nil {
 		return nil, err
 	}
-	if destTable == nil {
-		return nil, errors.New("bigquery: query job missing destination table")
+	// Shave off some potential overhead by only retaining the minimal job representation in the iterator.
+	itJob := &Job{
+		c:         j.c,
+		projectID: j.projectID,
+		jobID:     j.jobID,
+		location:  j.location,
 	}
-	dt := bqToTable(destTable, j.c)
-	if totalRows == 0 {
-		pf = nil
-	}
-	it := newRowIterator(ctx, dt, pf)
+	it := newRowIterator(ctx, &rowSource{j: itJob}, pf)
 	it.Schema = schema
 	it.TotalRows = totalRows
 	return it, nil
@@ -322,7 +345,7 @@ func (j *Job) waitForQuery(ctx context.Context, projectID string) (Schema, uint6
 	err := internal.Retry(ctx, backoff, func() (stop bool, err error) {
 		res, err = call.Do()
 		if err != nil {
-			return !retryableError(err), err
+			return !retryableError(err, jobRetryReasons), err
 		}
 		if !res.JobComplete { // GetQueryResults may return early without error; retry.
 			return false, nil
@@ -353,6 +376,15 @@ type JobStatistics struct {
 	// ScriptStatistics includes information run as part of a child job within
 	// a script.
 	ScriptStatistics *ScriptStatistics
+
+	// ReservationUsage attributes slot consumption to reservations.
+	ReservationUsage []*ReservationUsage
+
+	// TransactionInfo indicates the transaction ID associated with the job, if any.
+	TransactionInfo *TransactionInfo
+
+	// SessionInfo contains information about the session if this job is part of one.
+	SessionInfo *SessionInfo
 }
 
 // Statistics is one of ExtractStatistics, LoadStatistics or QueryStatistics.
@@ -387,6 +419,10 @@ type LoadStatistics struct {
 
 // QueryStatistics contains statistics about a query job.
 type QueryStatistics struct {
+
+	// BI-Engine specific statistics.
+	BIEngineStatistics *BIEngineStatistics
+
 	// Billing tier for the job.
 	BillingTier int64
 
@@ -407,7 +443,7 @@ type QueryStatistics struct {
 	// UNKNOWN: accuracy of the estimate is unknown.
 	// PRECISE: estimate is precise.
 	// LOWER_BOUND: estimate is lower bound of what the query would cost.
-	// UPPER_BOUND: estiamte is upper bound of what the query would cost.
+	// UPPER_BOUND: estimate is upper bound of what the query would cost.
 	TotalBytesProcessedAccuracy string
 
 	// Describes execution plan for the query.
@@ -416,6 +452,10 @@ type QueryStatistics struct {
 	// The number of rows affected by a DML statement. Present only for DML
 	// statements INSERT, UPDATE or DELETE.
 	NumDMLAffectedRows int64
+
+	// DMLStats provides statistics about the row mutations performed by
+	// DML statements.
+	DMLStats *DMLStatistics
 
 	// Describes a timeline of job execution.
 	Timeline []*QueryTimelineSample
@@ -445,6 +485,51 @@ type QueryStatistics struct {
 
 	// The DDL target table, present only for CREATE/DROP FUNCTION/PROCEDURE queries.
 	DDLTargetRoutine *Routine
+}
+
+// BIEngineStatistics contains query statistics specific to the use of BI Engine.
+type BIEngineStatistics struct {
+	// Specifies which mode of BI Engine acceleration was performed.
+	BIEngineMode string
+
+	// In case of DISABLED or PARTIAL BIEngineMode, these
+	// contain the explanatory reasons as to why BI Engine could not
+	// accelerate. In case the full query was accelerated, this field is not
+	// populated.
+	BIEngineReasons []*BIEngineReason
+}
+
+func bqToBIEngineStatistics(in *bq.BiEngineStatistics) *BIEngineStatistics {
+	if in == nil {
+		return nil
+	}
+	stats := &BIEngineStatistics{
+		BIEngineMode: in.BiEngineMode,
+	}
+	for _, v := range in.BiEngineReasons {
+		stats.BIEngineReasons = append(stats.BIEngineReasons, bqToBIEngineReason(v))
+	}
+	return stats
+}
+
+// BIEngineReason contains more detailed information about why a query wasn't fully
+// accelerated.
+type BIEngineReason struct {
+	// High-Level BI engine reason for partial or disabled acceleration.
+	Code string
+
+	// Human-readable reason for partial or disabled acceleration.
+	Message string
+}
+
+func bqToBIEngineReason(in *bq.BiEngineReason) *BIEngineReason {
+	if in == nil {
+		return nil
+	}
+	return &BIEngineReason{
+		Code:    in.Code,
+		Message: in.Message,
+	}
 }
 
 // ExplainQueryStage describes one stage of a query.
@@ -567,6 +652,25 @@ type QueryTimelineSample struct {
 	SlotMillis int64
 }
 
+// ReservationUsage contains information about a job's usage of a single reservation.
+type ReservationUsage struct {
+	// SlotMillis reports the slot milliseconds utilized within in the given reservation.
+	SlotMillis int64
+	// Name indicates the utilized reservation name, or "unreserved" for ondemand usage.
+	Name string
+}
+
+func bqToReservationUsage(ru []*bq.JobStatisticsReservationUsage) []*ReservationUsage {
+	var usage []*ReservationUsage
+	for _, in := range ru {
+		usage = append(usage, &ReservationUsage{
+			SlotMillis: in.SlotMs,
+			Name:       in.Name,
+		})
+	}
+	return usage
+}
+
 // ScriptStatistics report information about script-based query jobs.
 type ScriptStatistics struct {
 	EvaluationKind string
@@ -624,6 +728,27 @@ func bqToScriptStackFrame(bsf *bq.ScriptStackFrame) *ScriptStackFrame {
 		EndColumn:   bsf.EndColumn,
 		ProcedureID: bsf.ProcedureId,
 		Text:        bsf.Text,
+	}
+}
+
+// DMLStatistics contains counts of row mutations triggered by a DML query statement.
+type DMLStatistics struct {
+	// Rows added by the statement.
+	InsertedRowCount int64
+	// Rows removed by the statement.
+	DeletedRowCount int64
+	// Rows changed by the statement.
+	UpdatedRowCount int64
+}
+
+func bqToDMLStatistics(q *bq.DmlStatistics) *DMLStatistics {
+	if q == nil {
+		return nil
+	}
+	return &DMLStatistics{
+		InsertedRowCount: q.InsertedRowCount,
+		DeletedRowCount:  q.DeletedRowCount,
+		UpdatedRowCount:  q.UpdatedRowCount,
 	}
 }
 
@@ -730,9 +855,13 @@ func convertListedJob(j *bq.JobListJobs, c *Client) (*Job, error) {
 	return bqToJob2(j.JobReference, j.Configuration, j.Status, j.Statistics, j.UserEmail, c)
 }
 
-func (c *Client) getJobInternal(ctx context.Context, jobID, location string, fields ...googleapi.Field) (*bq.Job, error) {
+func (c *Client) getJobInternal(ctx context.Context, jobID, location, projectID string, fields ...googleapi.Field) (*bq.Job, error) {
 	var job *bq.Job
-	call := c.bqs.Jobs.Get(c.projectID, jobID).Context(ctx)
+	proj := projectID
+	if proj == "" {
+		proj = c.projectID
+	}
+	call := c.bqs.Jobs.Get(proj, jobID).Context(ctx)
 	if location != "" {
 		call = call.Location(location)
 	}
@@ -816,6 +945,9 @@ func (j *Job) setStatistics(s *bq.JobStatistics, c *Client) {
 		NumChildJobs:        s.NumChildJobs,
 		ParentJobID:         s.ParentJobId,
 		ScriptStatistics:    bqToScriptStatistics(s.ScriptStatistics),
+		ReservationUsage:    bqToReservationUsage(s.ReservationUsage),
+		TransactionInfo:     bqToTransactionInfo(s.TransactionInfo),
+		SessionInfo:         bqToSessionInfo(s.SessionInfo),
 	}
 	switch {
 	case s.Extract != nil:
@@ -839,6 +971,7 @@ func (j *Job) setStatistics(s *bq.JobStatistics, c *Client) {
 			tables = append(tables, bqToTable(tr, c))
 		}
 		js.Details = &QueryStatistics{
+			BIEngineStatistics:            bqToBIEngineStatistics(s.Query.BiEngineStatistics),
 			BillingTier:                   s.Query.BillingTier,
 			CacheHit:                      s.Query.CacheHit,
 			DDLTargetTable:                bqToTable(s.Query.DdlTargetTable, c),
@@ -849,6 +982,7 @@ func (j *Job) setStatistics(s *bq.JobStatistics, c *Client) {
 			TotalBytesProcessed:           s.Query.TotalBytesProcessed,
 			TotalBytesProcessedAccuracy:   s.Query.TotalBytesProcessedAccuracy,
 			NumDMLAffectedRows:            s.Query.NumDmlAffectedRows,
+			DMLStats:                      bqToDMLStatistics(s.Query.DmlStats),
 			QueryPlan:                     queryPlanFromProto(s.Query.QueryPlan),
 			Schema:                        bqToSchema(s.Query.Schema),
 			SlotMillis:                    s.Query.TotalSlotMs,
@@ -917,4 +1051,33 @@ func timelineFromProto(timeline []*bq.QueryTimelineSample) []*QueryTimelineSampl
 		})
 	}
 	return res
+}
+
+// TransactionInfo contains information about a multi-statement transaction that may have associated with a job.
+type TransactionInfo struct {
+	// TransactionID is the system-generated identifier for the transaction.
+	TransactionID string
+}
+
+func bqToTransactionInfo(in *bq.TransactionInfo) *TransactionInfo {
+	if in == nil {
+		return nil
+	}
+	return &TransactionInfo{
+		TransactionID: in.TransactionId,
+	}
+}
+
+// SessionInfo contains information about a session associated with a job.
+type SessionInfo struct {
+	SessionID string
+}
+
+func bqToSessionInfo(in *bq.SessionInfo) *SessionInfo {
+	if in == nil {
+		return nil
+	}
+	return &SessionInfo{
+		SessionID: in.SessionId,
+	}
 }

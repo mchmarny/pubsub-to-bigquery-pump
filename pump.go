@@ -18,7 +18,6 @@ const (
 )
 
 func pump() (count int, err error) {
-
 	ctx := context.Background()
 	start := time.Now()
 
@@ -31,11 +30,12 @@ func pump() (count int, err error) {
 
 	logger.Printf("creating importer[%s.%s.%s]",
 		projectID, dsName, tblName)
-	imp, err := newImportClient(ctx, dsName, tblName)
+	imp, err := NewImportClient(ctx, dsName, tblName)
 	if err != nil {
 		return 0, fmt.Errorf("bigquery client[%s.%s]: %v",
 			dsName, tblName, err)
 	}
+	defer imp.Clear()
 
 	logger.Printf("creating pubsub subscription[%s]", subName)
 	s := client.Subscription(subName)
@@ -49,16 +49,13 @@ func pump() (count int, err error) {
 	// this will cancel the sub receive loop if max stall time has reached
 	ticker := time.NewTicker(5 * time.Second)
 	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				elapsed := int(time.Now().Sub(lastMessage).Seconds())
-				if elapsed > maxStall {
-					logger.Println("max stall time reached")
-					cancel()
-					ticker.Stop()
-					return
-				}
+		for c := range ticker.C {
+			elapsed := int(time.Since(lastMessage).Seconds())
+			if elapsed > maxStall {
+				logger.Printf("max stall time reached: %v", c)
+				cancel()
+				ticker.Stop()
+				return
 			}
 		}
 	}()
@@ -75,7 +72,7 @@ func pump() (count int, err error) {
 		totalCounter++
 
 		// append message to the importer
-		appendErr := imp.append(msg.Data)
+		appendErr := imp.Append(msg.Data)
 		if appendErr != nil {
 			logger.Printf("error on data append: %v", appendErr)
 			innerError = appendErr
@@ -88,14 +85,14 @@ func pump() (count int, err error) {
 		if messageCounter == batchSize {
 			logger.Println("batch size reached")
 			messageCounter = 0
-			if insertErr := imp.insert(ctx); insertErr != nil {
+			if insertErr := imp.Insert(ctx); insertErr != nil {
 				innerError = insertErr
 				return
 			}
 		}
 
 		// check if max job time has been reached
-		elapsed := int(time.Now().Sub(start).Seconds())
+		elapsed := int(time.Since(start).Seconds())
 		if elapsed > maxDuration {
 			logger.Println("max job exec time reached")
 			cancel()
@@ -119,13 +116,13 @@ func pump() (count int, err error) {
 	}
 
 	// insert leftovers
-	if insertErr := imp.insert(ctx); insertErr != nil {
+	if insertErr := imp.Insert(ctx); insertErr != nil {
 		return 0, fmt.Errorf("bigquery insert[%s] error: %v",
 			subName, insertErr)
 	}
 
 	// metrics
-	totalDuration := time.Now().Sub(start).Seconds()
+	totalDuration := time.Since(start).Seconds()
 	if metricErr := submitMetrics(ctx, subName, totalCounter, totalDuration); metricErr != nil {
 		return 0, fmt.Errorf("metrics[%s] error: %v",
 			subName, metricErr)
@@ -140,15 +137,17 @@ func submitMetrics(ctx context.Context, id string, c int, d float64) error {
 		return fmt.Errorf("metric client[%s]: %v", projectID, err)
 	}
 
-	if err = m.Publish(ctx, id, invocationMetric, 1); err != nil {
+	l := map[string]string{"subscription": id}
+
+	if err = m.Publish(ctx, invocationMetric, int64(1), l); err != nil {
 		return fmt.Errorf("metric record[%s][%s]: %v", id, invocationMetric, err)
 	}
 
-	if err = m.Publish(ctx, id, messagesMetric, c); err != nil {
+	if err = m.Publish(ctx, messagesMetric, int64(c), l); err != nil {
 		return fmt.Errorf("metric record[%s][%s]: %v", id, messagesMetric, err)
 	}
 
-	if err = m.Publish(ctx, id, durationMetric, d); err != nil {
+	if err = m.Publish(ctx, durationMetric, d, l); err != nil {
 		return fmt.Errorf("metric record[%s][%s]: %v", id, durationMetric, err)
 	}
 

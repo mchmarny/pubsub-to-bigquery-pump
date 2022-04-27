@@ -17,7 +17,8 @@ To create a metric client and then submit 1 metrics
 ```shell
 ctx := context.Background()
 c, err := metric.NewClient(ctx)
-err = c.Publish(ctx, "thermometer-1", "temperature", float64(36.1))
+labels := map[string]string{"label1": value1, "label2": value2}
+err := c.Publish(ctx, "temperature", float64(36.1), labels)
 ```
 
 ## View
